@@ -3,25 +3,31 @@ const c = @cImport(@cInclude("git2.h"));
 const git = @import("git.zig");
 
 pub const help =
-    \\usage: git diff [--staged] [<commit>] [<commit>..<commit>] [-- <path>...]
+    \\usage: git diff [--staged] [--stat] [--name-only] [<commit>] [-- <path>...]
     \\
     \\Show changes in working tree, staging area, or between commits.
     \\
     \\Options:
-    \\  --staged    Show staged changes (what will be committed)
+    \\  --staged      Show staged changes (what will be committed)
+    \\  --stat        Show diffstat (files changed, insertions, deletions)
+    \\  --name-only   Show only names of changed files
     \\
     \\Examples:
     \\  git diff                    Show unstaged changes
     \\  git diff --staged           Show staged changes
-    \\  git diff HEAD~2             Show changes since HEAD~2
+    \\  git diff --stat             Show summary of changes
+    \\  git diff --name-only        List changed files
     \\  git diff HEAD~2..HEAD       Show changes between commits
-    \\  git diff main...feature     Show changes since branches diverged
-    \\  git diff -- src/main.ts     Show changes to specific file
-    \\  git diff HEAD~2 -- src/     Show changes in path since commit
     \\
 ;
 
 const DiffError = git.Error || error{OutOfMemory};
+
+pub const OutputMode = enum {
+    patch,
+    stat,
+    name_only,
+};
 
 fn resolveTree(repo: ?*c.git_repository, spec: []const u8) ?*c.git_tree {
     // Create null-terminated string for libgit2
@@ -99,6 +105,7 @@ pub fn run(_: std.mem.Allocator, args: [][:0]u8) DiffError!void {
 
     // Parse args
     var staged = false;
+    var output_mode: OutputMode = .patch;
     var rev_spec: ?[]const u8 = null;
     var pathspecs: [MAX_PATHSPECS][*c]u8 = undefined;
     var pathspec_count: usize = 0;
@@ -120,11 +127,15 @@ pub fn run(_: std.mem.Allocator, args: [][:0]u8) DiffError!void {
             after_double_dash = true;
         } else if (std.mem.eql(u8, a, "--staged") or std.mem.eql(u8, a, "--cached")) {
             staged = true;
+        } else if (std.mem.eql(u8, a, "--stat")) {
+            output_mode = .stat;
+        } else if (std.mem.eql(u8, a, "--name-only")) {
+            output_mode = .name_only;
         } else if (std.mem.eql(u8, a, "-h") or std.mem.eql(u8, a, "--help")) {
             stdout.print("{s}", .{help}) catch {};
             return;
         } else if (std.mem.startsWith(u8, a, "-")) {
-            // Unknown flag (--stat, --name-only, -p, etc.) - passthrough to git
+            // Unknown flag - passthrough to git
             return git.Error.UnsupportedFlag;
         } else if (!std.mem.startsWith(u8, a, "-")) {
             // Non-flag argument is a revision spec
@@ -210,20 +221,31 @@ pub fn run(_: std.mem.Allocator, args: [][:0]u8) DiffError!void {
     }
     defer c.git_diff_free(diff);
 
-    // Track state for printing
-    var print_state = PrintState{
-        .stdout = stdout,
-        .current_file = null,
-        .current_hunk_start = 0,
-        .current_hunk_end = 0,
-        .had_output = false,
-    };
+    // Output based on mode
+    switch (output_mode) {
+        .stat => {
+            printStat(diff, stdout);
+        },
+        .name_only => {
+            printNameOnly(diff, stdout);
+        },
+        .patch => {
+            // Track state for printing
+            var print_state = PrintState{
+                .stdout = stdout,
+                .current_file = null,
+                .current_hunk_start = 0,
+                .current_hunk_end = 0,
+                .had_output = false,
+            };
 
-    // Print the diff
-    _ = c.git_diff_print(diff, c.GIT_DIFF_FORMAT_PATCH, printCallback, &print_state);
+            // Print the diff
+            _ = c.git_diff_print(diff, c.GIT_DIFF_FORMAT_PATCH, printCallback, &print_state);
 
-    if (!print_state.had_output) {
-        stdout.print("no changes\n", .{}) catch {};
+            if (!print_state.had_output) {
+                stdout.print("no changes\n", .{}) catch {};
+            }
+        },
     }
 }
 
@@ -234,6 +256,84 @@ const PrintState = struct {
     current_hunk_end: u32,
     had_output: bool,
 };
+
+fn printStat(diff: ?*c.git_diff, stdout: std.fs.File.DeprecatedWriter) void {
+    const num_deltas = c.git_diff_num_deltas(diff);
+    if (num_deltas == 0) {
+        stdout.print("no changes\n", .{}) catch {};
+        return;
+    }
+
+    var total_insertions: usize = 0;
+    var total_deletions: usize = 0;
+
+    var i: usize = 0;
+    while (i < num_deltas) : (i += 1) {
+        const delta = c.git_diff_get_delta(diff, i);
+        if (delta == null) continue;
+
+        const path = if (delta.*.new_file.path) |p| std.mem.sliceTo(p, 0) else continue;
+
+        // Get stats for this file
+        var patch: ?*c.git_patch = null;
+        if (c.git_patch_from_diff(&patch, diff, i) < 0) continue;
+        defer c.git_patch_free(patch);
+
+        var adds: usize = 0;
+        var dels: usize = 0;
+        _ = c.git_patch_line_stats(null, &adds, &dels, patch);
+
+        total_insertions += adds;
+        total_deletions += dels;
+
+        // Format: filename | changes +++ ---
+        const changes = adds + dels;
+        stdout.print(" {s} | {d} ", .{ path, changes }) catch {};
+
+        // Print +/- bar (max 20 chars)
+        const max_bar: usize = 20;
+        const total = if (changes > max_bar) max_bar else changes;
+        const plus_count = if (changes > 0) (adds * total) / changes else 0;
+        const minus_count = total - plus_count;
+
+        var j: usize = 0;
+        while (j < plus_count) : (j += 1) {
+            stdout.print("+", .{}) catch {};
+        }
+        j = 0;
+        while (j < minus_count) : (j += 1) {
+            stdout.print("-", .{}) catch {};
+        }
+        stdout.print("\n", .{}) catch {};
+    }
+
+    // Summary line
+    stdout.print(" {d} files changed", .{num_deltas}) catch {};
+    if (total_insertions > 0) {
+        stdout.print(", {d} insertions(+)", .{total_insertions}) catch {};
+    }
+    if (total_deletions > 0) {
+        stdout.print(", {d} deletions(-)", .{total_deletions}) catch {};
+    }
+    stdout.print("\n", .{}) catch {};
+}
+
+fn printNameOnly(diff: ?*c.git_diff, stdout: std.fs.File.DeprecatedWriter) void {
+    const num_deltas = c.git_diff_num_deltas(diff);
+    if (num_deltas == 0) {
+        stdout.print("no changes\n", .{}) catch {};
+        return;
+    }
+
+    var i: usize = 0;
+    while (i < num_deltas) : (i += 1) {
+        const delta = c.git_diff_get_delta(diff, i);
+        if (delta == null) continue;
+
+        const path = if (delta.*.new_file.path) |p| std.mem.sliceTo(p, 0) else continue;
+        stdout.print("{s}\n", .{path}) catch {};
+    }
+}
 
 fn printCallback(
     delta: ?*const c.git_diff_delta,
