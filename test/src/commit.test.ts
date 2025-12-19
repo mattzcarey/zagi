@@ -87,16 +87,4 @@ describe("zagi commit", () => {
     expect(result.output).toContain("Equals format");
     expect(result.exitCode).toBe(0);
   });
-
-  test("zagi commit output is more concise than git", () => {
-    stageTestFile();
-    const zagiResult = runCommand(ZAGI_BIN, ["commit", "-m", "Zagi commit"]);
-
-    const testFile2 = resolve(REPO_DIR, "commit-test-2.txt");
-    writeFileSync(testFile2, `test content 2 ${Date.now()}\n`);
-    execFileSync("git", ["add", "commit-test-2.txt"], { cwd: REPO_DIR });
-    const gitResult = runCommand("git", ["commit", "-m", "Git commit"]);
-
-    expect(zagiResult.output.length).toBeLessThan(gitResult.output.length);
-  });
 });

@@ -157,9 +157,9 @@ zig build test         # run zig unit tests
 
 Fix any compiler errors. Test manually with various inputs.
 
-### 8. Add benchmark tests
+### 8. Add integration tests
 
-Create `bench/src/<command>.test.ts`:
+Create `test/src/<command>.test.ts`:
 
 ```typescript
 import { describe, test, expect } from "vitest";
@@ -184,12 +184,12 @@ describe("performance", () => {
 
 Run with:
 ```bash
-cd bench && bun i && bun test
+cd test && bun i && bun run test
 ```
 
 To run all tests (Zig + TypeScript):
 ```bash
-zig build test && cd bench && bun test
+zig build test && cd test && bun run test
 ```
 
 ### 9. Optimize (if needed)
@@ -215,7 +215,7 @@ src/
     commit.zig       # zagi commit
     <command>.zig    # New commands
 
-bench/
+test/
   src/
     log.test.ts      # log integration tests
     status.test.ts   # status integration tests

@@ -73,9 +73,9 @@ abc123f (2025-01-15) Alice: Add user authentication system
 Requirements: Zig 0.15, Bun
 
 ```bash
-zig build              # build
-zig build test         # run zig tests
-cd bench && bun i && bun run test   # run integration tests
+zig build                           # build
+zig build test                      # run zig tests
+cd test && bun i && bun run test    # run integration tests
 ```
 
 See [AGENTS.md](AGENTS.md) for contribution guidelines.
