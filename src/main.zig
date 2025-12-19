@@ -1,6 +1,7 @@
 const std = @import("std");
 const passthrough = @import("passthrough.zig");
 const log = @import("cmds/log.zig");
+const status = @import("cmds/status.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -20,6 +21,8 @@ pub fn main() !void {
 
     if (std.mem.eql(u8, cmd, "log")) {
         try log.run(allocator, args);
+    } else if (std.mem.eql(u8, cmd, "status")) {
+        try status.run(allocator, args);
     } else {
         try passthrough.run(allocator, args);
     }
