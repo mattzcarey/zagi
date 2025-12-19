@@ -2,6 +2,16 @@ const std = @import("std");
 const c = @cImport(@cInclude("git2.h"));
 const git = @import("git.zig");
 
+pub const help =
+    \\usage: zagi add <path>...
+    \\
+    \\Stage files for commit.
+    \\
+    \\Arguments:
+    \\  <path>  File or directory to stage (use . for all)
+    \\
+;
+
 pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) (git.Error || error{WriteError})!void {
     _ = allocator;
     const stdout = std.fs.File.stdout().deprecatedWriter();

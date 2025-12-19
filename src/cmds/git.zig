@@ -12,6 +12,8 @@ pub const Error = error{
     UsageError,
     WriteFailed,
     AddFailed,
+    NothingToCommit,
+    CommitFailed,
 };
 
 pub fn indexMarker(status: c_uint) []const u8 {

@@ -2,6 +2,16 @@ const std = @import("std");
 const builtin = @import("builtin");
 const git = @import("git.zig");
 
+pub const help =
+    \\usage: zagi alias [--print]
+    \\
+    \\Set up git alias to zagi in your shell config.
+    \\
+    \\Options:
+    \\  --print, -p  Print alias command instead of adding it
+    \\
+;
+
 const Shell = enum {
     bash,
     zsh,

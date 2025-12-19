@@ -2,6 +2,17 @@ const std = @import("std");
 const c = @cImport(@cInclude("git2.h"));
 const git = @import("git.zig");
 
+pub const help =
+    \\usage: zagi log [-n <count>] [--full]
+    \\
+    \\Show commit history.
+    \\
+    \\Options:
+    \\  -n <count>  Limit to n commits (default: 10)
+    \\  --full      Show full commit details
+    \\
+;
+
 const Options = struct {
     max_count: usize = 10,
     full: bool = false,

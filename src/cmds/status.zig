@@ -2,6 +2,15 @@ const std = @import("std");
 const c = @cImport(@cInclude("git2.h"));
 const git = @import("git.zig");
 
+pub const help =
+    \\usage: zagi status
+    \\
+    \\Show working tree status.
+    \\
+    \\Displays staged, modified, and untracked files.
+    \\
+;
+
 pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) (git.Error || error{OutOfMemory})!void {
     _ = args;
     const stdout = std.fs.File.stdout().deprecatedWriter();
