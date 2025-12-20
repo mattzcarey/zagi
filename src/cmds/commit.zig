@@ -14,7 +14,8 @@ pub const help =
     \\  --prompt <p>   Store the complete user prompt that created this commit
     \\
     \\Environment:
-    \\  ZAGI_AGENT=<name>   Declare agent operator (requires --prompt)
+    \\  ZAGI_AGENT=<name>        Declare agent operator (requires --prompt)
+    \\  ZAGI_STRIP_COAUTHORS=1   Remove Co-Authored-By lines from message
     \\
 ;
 
@@ -171,6 +172,13 @@ pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) git.Error!void {
         return git.Error.UsageError;
     }
 
+    // Strip co-authors if ZAGI_STRIP_COAUTHORS is set
+    var stripped_message_buf: [4096]u8 = undefined;
+    if (std.posix.getenv("ZAGI_STRIP_COAUTHORS") != null) {
+        const stripped_len = stripCoAuthors(final_message, &stripped_message_buf);
+        final_message = stripped_message_buf[0..stripped_len];
+    }
+
     // Copy message to null-terminated buffer
     if (final_message.len >= message_buf.len) {
         return git.Error.CommitFailed;
@@ -296,6 +304,57 @@ fn getDiffStats(allocator: std.mem.Allocator, repo: ?*c.git_repository, old_comm
     };
 }
 
+/// Strips Co-Authored-By lines from a commit message.
+/// Handles case-insensitive matching and trailing whitespace cleanup.
+pub fn stripCoAuthors(input: []const u8, output: *[4096]u8) usize {
+    var out_pos: usize = 0;
+    var iter = std.mem.splitScalar(u8, input, '\n');
+
+    var first_line = true;
+    while (iter.next()) |line| {
+        // Check if line starts with "Co-Authored-By:" (case insensitive)
+        const trimmed = std.mem.trimLeft(u8, line, " \t");
+        if (isCoAuthorLine(trimmed)) {
+            continue; // Skip this line
+        }
+
+        // Add newline before this line (except for first line)
+        if (!first_line) {
+            if (out_pos < output.len) {
+                output[out_pos] = '\n';
+                out_pos += 1;
+            }
+        }
+        first_line = false;
+
+        // Copy line to output
+        const to_copy = @min(line.len, output.len - out_pos);
+        @memcpy(output[out_pos..][0..to_copy], line[0..to_copy]);
+        out_pos += to_copy;
+    }
+
+    // Trim trailing whitespace/newlines
+    while (out_pos > 0 and (output[out_pos - 1] == '\n' or output[out_pos - 1] == ' ' or output[out_pos - 1] == '\t')) {
+        out_pos -= 1;
+    }
+
+    return out_pos;
+}
+
+fn isCoAuthorLine(line: []const u8) bool {
+    const prefix = "co-authored-by:";
+    if (line.len < prefix.len) return false;
+
+    // Case-insensitive comparison
+    var i: usize = 0;
+    while (i < prefix.len) : (i += 1) {
+        const ch = line[i];
+        const lower = if (ch >= 'A' and ch <= 'Z') ch + 32 else ch;
+        if (lower != prefix[i]) return false;
+    }
+    return true;
+}
+
 // Output formatting functions (testable)
 
 pub fn formatCommitOutput(writer: anytype, hash: []const u8, message: []const u8, files: usize, insertions: usize, deletions: usize) !void {
@@ -341,4 +400,46 @@ test "formatCommitOutput with no file changes" {
 
     const expected = "committed: ghi9012 \"Empty commit\"\n";
     try testing.expectEqualStrings(expected, output.items);
+}
+
+test "stripCoAuthors removes single co-author" {
+    var buf: [4096]u8 = undefined;
+    const input = "Fix bug\n\nCo-Authored-By: Claude <claude@anthropic.com>";
+    const len = stripCoAuthors(input, &buf);
+    try testing.expectEqualStrings("Fix bug", buf[0..len]);
+}
+
+test "stripCoAuthors removes multiple co-authors" {
+    var buf: [4096]u8 = undefined;
+    const input = "Add feature\n\nCo-Authored-By: Alice <alice@example.com>\nCo-Authored-By: Bob <bob@example.com>";
+    const len = stripCoAuthors(input, &buf);
+    try testing.expectEqualStrings("Add feature", buf[0..len]);
+}
+
+test "stripCoAuthors is case insensitive" {
+    var buf: [4096]u8 = undefined;
+    const input = "Update docs\n\nco-authored-by: Claude <claude@anthropic.com>\nCO-AUTHORED-BY: Bob <bob@example.com>";
+    const len = stripCoAuthors(input, &buf);
+    try testing.expectEqualStrings("Update docs", buf[0..len]);
+}
+
+test "stripCoAuthors preserves other content" {
+    var buf: [4096]u8 = undefined;
+    const input = "Fix bug\n\nThis fixes issue #123.\n\nCo-Authored-By: Claude <claude@anthropic.com>\n\nSigned-off-by: Matt";
+    const len = stripCoAuthors(input, &buf);
+    try testing.expectEqualStrings("Fix bug\n\nThis fixes issue #123.\n\n\nSigned-off-by: Matt", buf[0..len]);
+}
+
+test "stripCoAuthors handles message without co-authors" {
+    var buf: [4096]u8 = undefined;
+    const input = "Simple commit message";
+    const len = stripCoAuthors(input, &buf);
+    try testing.expectEqualStrings("Simple commit message", buf[0..len]);
+}
+
+test "stripCoAuthors handles indented co-author lines" {
+    var buf: [4096]u8 = undefined;
+    const input = "Fix thing\n\n  Co-Authored-By: Claude <claude@anthropic.com>";
+    const len = stripCoAuthors(input, &buf);
+    try testing.expectEqualStrings("Fix thing", buf[0..len]);
 }

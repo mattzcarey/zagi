@@ -222,3 +222,121 @@ describe("ZAGI_AGENT", () => {
     expect(result.exitCode).toBe(0);
   });
 });
+
+describe("ZAGI_STRIP_COAUTHORS", () => {
+  function runWithEnv(
+    args: string[],
+    env: Record<string, string>,
+    expectFail = false
+  ): CommandResult {
+    try {
+      const output = execFileSync(ZAGI_BIN, args, {
+        cwd: REPO_DIR,
+        encoding: "utf-8",
+        env: { ...process.env, ...env },
+      });
+      return { output, exitCode: 0 };
+    } catch (e: any) {
+      if (!expectFail) throw e;
+      return {
+        output: e.stdout || e.stderr || "",
+        exitCode: e.status || 1,
+      };
+    }
+  }
+
+  test("strips Co-Authored-By lines when enabled", () => {
+    stageTestFile();
+    const message = `Add feature
+
+Co-Authored-By: Claude <claude@anthropic.com>`;
+
+    const result = runWithEnv(
+      ["commit", "-m", message],
+      { ZAGI_STRIP_COAUTHORS: "1" }
+    );
+
+    expect(result.output).toContain("committed:");
+    expect(result.exitCode).toBe(0);
+
+    // Check the actual commit message
+    const logResult = execFileSync("git", ["log", "-1", "--format=%B"], {
+      cwd: REPO_DIR,
+      encoding: "utf-8",
+    });
+
+    expect(logResult.trim()).toBe("Add feature");
+    expect(logResult).not.toContain("Co-Authored-By");
+  });
+
+  test("preserves Co-Authored-By when not enabled", () => {
+    stageTestFile();
+    const message = `Add feature
+
+Co-Authored-By: Claude <claude@anthropic.com>`;
+
+    const result = runCommand(ZAGI_BIN, ["commit", "-m", message]);
+
+    expect(result.output).toContain("committed:");
+    expect(result.exitCode).toBe(0);
+
+    // Check the actual commit message
+    const logResult = execFileSync("git", ["log", "-1", "--format=%B"], {
+      cwd: REPO_DIR,
+      encoding: "utf-8",
+    });
+
+    expect(logResult).toContain("Co-Authored-By: Claude");
+  });
+
+  test("strips multiple Co-Authored-By lines", () => {
+    stageTestFile();
+    const message = `Fix bug
+
+Co-Authored-By: Alice <alice@example.com>
+Co-Authored-By: Bob <bob@example.com>`;
+
+    const result = runWithEnv(
+      ["commit", "-m", message],
+      { ZAGI_STRIP_COAUTHORS: "1" }
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const logResult = execFileSync("git", ["log", "-1", "--format=%B"], {
+      cwd: REPO_DIR,
+      encoding: "utf-8",
+    });
+
+    expect(logResult.trim()).toBe("Fix bug");
+    expect(logResult).not.toContain("Co-Authored-By");
+  });
+
+  test("preserves other message content", () => {
+    stageTestFile();
+    const message = `Implement feature
+
+This adds a great new feature.
+
+Co-Authored-By: Claude <claude@anthropic.com>
+
+Signed-off-by: Matt`;
+
+    const result = runWithEnv(
+      ["commit", "-m", message],
+      { ZAGI_STRIP_COAUTHORS: "1" }
+    );
+
+    expect(result.exitCode).toBe(0);
+
+    const logResult = execFileSync("git", ["log", "-1", "--format=%B"], {
+      cwd: REPO_DIR,
+      encoding: "utf-8",
+    });
+
+    expect(logResult).toContain("Implement feature");
+    expect(logResult).toContain("This adds a great new feature");
+    expect(logResult).toContain("Signed-off-by: Matt");
+    expect(logResult).not.toContain("Co-Authored-By");
+  });
+});

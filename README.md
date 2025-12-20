@@ -76,6 +76,17 @@ git commit -m "Add feature" --prompt "Add a logout button to the header.."
 git log --prompts  # view prompts
 ```
 
+### Strip co-authors
+
+Remove `Co-Authored-By:` lines that AI tools like Claude Code add to commit messages:
+
+```bash
+export ZAGI_STRIP_COAUTHORS=1
+git commit -m "Add feature
+
+Co-Authored-By: Claude <claude@anthropic.com>"  # stripped automatically
+```
+
 ### Git passthrough
 
 Commands zagi doesn't implement pass through to git or use `-g` to force standard git output:
