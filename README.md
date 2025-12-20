@@ -38,6 +38,8 @@ git add .          # confirms what was staged
 git commit -m "x"  # shows commit stats
 ```
 
+Any commands or flags not yet implemented in zagi pass through to git. zagi also comes with its own set of features for managing code written by agents.
+
 ### Easy worktrees
 
 zagi ships with a wrapper around worktrees called `fork`:
