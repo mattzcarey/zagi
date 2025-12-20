@@ -5,7 +5,7 @@ const git = @import("git.zig");
 pub const help =
     \\usage: git fork [<name>] [options]
     \\
-    \\Manage parallel working copies for experimentation.
+    \\Manage parallel working copies of a repository.
     \\
     \\Commands:
     \\  git fork <name>             Create a new fork in .forks/<name>/
