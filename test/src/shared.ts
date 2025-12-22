@@ -13,7 +13,7 @@ export interface ZagiOptions {
 
 /**
  * Run zagi command with isolated environment.
- * By default removes ZAGI_AGENT to avoid --prompt requirement.
+ * By default removes ZAGI_AGENT and ZAGI_STRIP_COAUTHORS to avoid test pollution.
  */
 export function zagi(args: string[], options: ZagiOptions = {}): string {
   const { cwd = process.cwd(), env: envOverrides = {} } = options;
@@ -21,9 +21,12 @@ export function zagi(args: string[], options: ZagiOptions = {}): string {
   // Create isolated env - start with current env
   const env = { ...process.env };
 
-  // By default, remove ZAGI_AGENT unless explicitly set
+  // By default, remove zagi env vars unless explicitly set
   if (!("ZAGI_AGENT" in envOverrides)) {
     delete env.ZAGI_AGENT;
+  }
+  if (!("ZAGI_STRIP_COAUTHORS" in envOverrides)) {
+    delete env.ZAGI_STRIP_COAUTHORS;
   }
 
   // Apply overrides (undefined removes the key)

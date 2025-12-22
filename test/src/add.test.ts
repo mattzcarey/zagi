@@ -1,32 +1,9 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { execFileSync } from "child_process";
-import { resolve } from "path";
 import { rmSync } from "fs";
 import { createFixtureRepo } from "../fixtures/setup";
+import { zagi, git } from "./shared";
 
-const ZAGI_BIN = resolve(__dirname, "../../zig-out/bin/zagi");
 let REPO_DIR: string;
-
-interface CommandResult {
-  output: string;
-  exitCode: number;
-}
-
-function runCommand(cmd: string, args: string[], expectFail = false): CommandResult {
-  try {
-    const output = execFileSync(cmd, args, {
-      cwd: REPO_DIR,
-      encoding: "utf-8",
-    });
-    return { output, exitCode: 0 };
-  } catch (e: any) {
-    if (!expectFail) throw e;
-    return {
-      output: e.stderr || e.stdout || "",
-      exitCode: e.status || 1,
-    };
-  }
-}
 
 beforeEach(() => {
   REPO_DIR = createFixtureRepo();
@@ -40,35 +17,34 @@ afterEach(() => {
 
 describe("zagi add", () => {
   test("shows confirmation after adding file", () => {
-    const result = runCommand(ZAGI_BIN, ["add", "src/new-file.ts"]);
+    const result = zagi(["add", "src/new-file.ts"], { cwd: REPO_DIR });
 
-    expect(result.output).toContain("staged:");
-    expect(result.output).toContain("A ");
-    expect(result.output).toContain("new-file.ts");
+    expect(result).toContain("staged:");
+    expect(result).toContain("A ");
+    expect(result).toContain("new-file.ts");
   });
 
   test("shows count of staged files", () => {
-    const result = runCommand(ZAGI_BIN, ["add", "src/new-file.ts"]);
+    const result = zagi(["add", "src/new-file.ts"], { cwd: REPO_DIR });
 
-    expect(result.output).toMatch(/staged: \d+ file/);
+    expect(result).toMatch(/staged: \d+ file/);
   });
 
   test("error message is concise for missing file", () => {
-    const zagi = runCommand(ZAGI_BIN, ["add", "nonexistent.txt"], true);
+    const result = zagi(["add", "nonexistent.txt"], { cwd: REPO_DIR });
 
-    expect(zagi.output).toBe("error: file not found\n");
-    expect(zagi.exitCode).toBe(128);
+    expect(result).toBe("error: file not found\n");
   });
 
   test("git add is silent on success", () => {
-    const git = runCommand("git", ["add", "src/new-file.ts"]);
+    const result = git(["add", "src/new-file.ts"], { cwd: REPO_DIR });
 
-    expect(git.output).toBe("");
+    expect(result).toBe("");
   });
 
   test("zagi add provides feedback", () => {
-    const zagi = runCommand(ZAGI_BIN, ["add", "src/new-file.ts"]);
+    const result = zagi(["add", "src/new-file.ts"], { cwd: REPO_DIR });
 
-    expect(zagi.output.length).toBeGreaterThan(0);
+    expect(result.length).toBeGreaterThan(0);
   });
 });

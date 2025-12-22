@@ -1,18 +1,10 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { execFileSync } from "child_process";
 import { resolve } from "path";
 import { rmSync, writeFileSync, readFileSync } from "fs";
 import { createFixtureRepo } from "../fixtures/setup";
+import { zagi, git } from "./shared";
 
-const ZAGI_BIN = resolve(__dirname, "../../zig-out/bin/zagi");
 let REPO_DIR: string;
-
-function runCommand(cmd: string, args: string[]): string {
-  return execFileSync(cmd, args, {
-    cwd: REPO_DIR,
-    encoding: "utf-8",
-  });
-}
 
 beforeEach(() => {
   REPO_DIR = createFixtureRepo();
@@ -26,20 +18,20 @@ afterEach(() => {
 
 describe("zagi diff", () => {
   test("produces smaller output than git diff", () => {
-    const zagi = runCommand(ZAGI_BIN, ["diff"]);
-    const git = runCommand("git", ["diff"]);
+    const zagiOut = zagi(["diff"], { cwd: REPO_DIR });
+    const gitOut = git(["diff"], { cwd: REPO_DIR });
 
-    expect(zagi.length).toBeLessThan(git.length);
+    expect(zagiOut.length).toBeLessThan(gitOut.length);
   });
 
   test("shows file path with line number", () => {
-    const result = runCommand(ZAGI_BIN, ["diff"]);
+    const result = zagi(["diff"], { cwd: REPO_DIR });
     // Format: path/to/file.ts:123
     expect(result).toMatch(/^[\w/.-]+:\d+/m);
   });
 
   test("shows additions with + prefix", () => {
-    const result = runCommand(ZAGI_BIN, ["diff"]);
+    const result = zagi(["diff"], { cwd: REPO_DIR });
     expect(result).toMatch(/^\+ /m);
   });
 
@@ -51,24 +43,24 @@ describe("zagi diff", () => {
     lines.splice(5, 1); // Remove line 6
     writeFileSync(filePath, lines.join("\n"));
 
-    const result = runCommand(ZAGI_BIN, ["diff"]);
+    const result = zagi(["diff"], { cwd: REPO_DIR });
     expect(result).toMatch(/^- /m);
   });
 
   test("--staged shows staged changes", () => {
     // Stage the existing modified file
-    execFileSync("git", ["add", "src/main.ts"], { cwd: REPO_DIR });
+    git(["add", "src/main.ts"], { cwd: REPO_DIR });
 
-    const result = runCommand(ZAGI_BIN, ["diff", "--staged"]);
+    const result = zagi(["diff", "--staged"], { cwd: REPO_DIR });
     expect(result).toContain("src/main.ts");
   });
 
   test("no changes shows 'no changes'", () => {
     // Reset all changes
-    execFileSync("git", ["checkout", "--", "."], { cwd: REPO_DIR });
-    execFileSync("git", ["clean", "-fd"], { cwd: REPO_DIR });
+    git(["checkout", "--", "."], { cwd: REPO_DIR });
+    git(["clean", "-fd"], { cwd: REPO_DIR });
 
-    const result = runCommand(ZAGI_BIN, ["diff"]);
+    const result = zagi(["diff"], { cwd: REPO_DIR });
     expect(result).toBe("no changes\n");
   });
 
@@ -76,7 +68,7 @@ describe("zagi diff", () => {
     // Create another modified file
     writeFileSync(resolve(REPO_DIR, "README.md"), "# Modified\n");
 
-    const result = runCommand(ZAGI_BIN, ["diff", "--", "src/main.ts"]);
+    const result = zagi(["diff", "--", "src/main.ts"], { cwd: REPO_DIR });
     expect(result).toContain("src/main.ts");
     expect(result).not.toContain("README.md");
   });
@@ -85,28 +77,28 @@ describe("zagi diff", () => {
     // Modify a file outside src/
     writeFileSync(resolve(REPO_DIR, "README.md"), "# Modified\n");
 
-    const result = runCommand(ZAGI_BIN, ["diff", "--", "src/"]);
+    const result = zagi(["diff", "--", "src/"], { cwd: REPO_DIR });
     expect(result).toContain("src/main.ts");
     expect(result).not.toContain("README.md");
   });
 
   test("revision range shows changes between commits", () => {
     // Commit the current changes first
-    execFileSync("git", ["add", "."], { cwd: REPO_DIR });
-    execFileSync("git", ["commit", "-m", "test commit"], { cwd: REPO_DIR });
+    git(["add", "."], { cwd: REPO_DIR });
+    git(["commit", "-m", "test commit"], { cwd: REPO_DIR });
 
     // Now diff between previous and current
-    const result = runCommand(ZAGI_BIN, ["diff", "HEAD~1..HEAD"]);
+    const result = zagi(["diff", "HEAD~1..HEAD"], { cwd: REPO_DIR });
     expect(result).toContain("src/main.ts");
   });
 
   test("single revision shows changes since that commit", () => {
     // Commit the current changes first
-    execFileSync("git", ["add", "."], { cwd: REPO_DIR });
-    execFileSync("git", ["commit", "-m", "test commit"], { cwd: REPO_DIR });
+    git(["add", "."], { cwd: REPO_DIR });
+    git(["commit", "-m", "test commit"], { cwd: REPO_DIR });
 
     // Diff from previous commit to HEAD
-    const result = runCommand(ZAGI_BIN, ["diff", "HEAD~1"]);
+    const result = zagi(["diff", "HEAD~1"], { cwd: REPO_DIR });
     expect(result).toContain("src/main.ts");
   });
 
@@ -115,36 +107,31 @@ describe("zagi diff", () => {
     writeFileSync(resolve(REPO_DIR, "README.md"), "# Modified\n");
 
     // Commit all changes
-    execFileSync("git", ["add", "."], { cwd: REPO_DIR });
-    execFileSync("git", ["commit", "-m", "test commit"], { cwd: REPO_DIR });
+    git(["add", "."], { cwd: REPO_DIR });
+    git(["commit", "-m", "test commit"], { cwd: REPO_DIR });
 
     // Diff with path filter - should only show src/main.ts
-    const result = runCommand(ZAGI_BIN, [
-      "diff",
-      "HEAD~1..HEAD",
-      "--",
-      "src/main.ts",
-    ]);
+    const result = zagi(["diff", "HEAD~1..HEAD", "--", "src/main.ts"], { cwd: REPO_DIR });
     expect(result).toContain("src/main.ts");
     expect(result).not.toContain("README.md");
   });
 
   test("triple dot shows changes since branches diverged", () => {
     // Create a branch from current state
-    execFileSync("git", ["checkout", "-b", "feature"], { cwd: REPO_DIR });
+    git(["checkout", "-b", "feature"], { cwd: REPO_DIR });
 
     // Make a commit on feature branch
-    execFileSync("git", ["add", "."], { cwd: REPO_DIR });
-    execFileSync("git", ["commit", "-m", "feature commit"], { cwd: REPO_DIR });
+    git(["add", "."], { cwd: REPO_DIR });
+    git(["commit", "-m", "feature commit"], { cwd: REPO_DIR });
 
     // Go back to main and make different changes
-    execFileSync("git", ["checkout", "main"], { cwd: REPO_DIR });
+    git(["checkout", "main"], { cwd: REPO_DIR });
     writeFileSync(resolve(REPO_DIR, "README.md"), "# Main branch change\n");
-    execFileSync("git", ["add", "."], { cwd: REPO_DIR });
-    execFileSync("git", ["commit", "-m", "main commit"], { cwd: REPO_DIR });
+    git(["add", "."], { cwd: REPO_DIR });
+    git(["commit", "-m", "main commit"], { cwd: REPO_DIR });
 
     // Triple dot should show feature branch changes (not main changes)
-    const result = runCommand(ZAGI_BIN, ["diff", "main...feature"]);
+    const result = zagi(["diff", "main...feature"], { cwd: REPO_DIR });
     expect(result).toContain("src/main.ts"); // Feature branch change
     expect(result).not.toContain("Main branch change"); // Not main branch change
   });
@@ -155,13 +142,13 @@ describe("zagi diff output format", () => {
     // Create a file with a single line change
     const filePath = resolve(REPO_DIR, "single.txt");
     writeFileSync(filePath, "line1\nline2\nline3\n");
-    execFileSync("git", ["add", "single.txt"], { cwd: REPO_DIR });
-    execFileSync("git", ["commit", "-m", "add single.txt"], { cwd: REPO_DIR });
+    git(["add", "single.txt"], { cwd: REPO_DIR });
+    git(["commit", "-m", "add single.txt"], { cwd: REPO_DIR });
 
     // Change only line 2
     writeFileSync(filePath, "line1\nmodified\nline3\n");
 
-    const result = runCommand(ZAGI_BIN, ["diff"]);
+    const result = zagi(["diff"], { cwd: REPO_DIR });
     // Should have format: single.txt:2
     expect(result).toMatch(/single\.txt:\d+\n/);
   });
@@ -170,19 +157,19 @@ describe("zagi diff output format", () => {
     // Create a file
     const filePath = resolve(REPO_DIR, "multi.txt");
     writeFileSync(filePath, "line1\nline2\nline3\nline4\nline5\n");
-    execFileSync("git", ["add", "multi.txt"], { cwd: REPO_DIR });
-    execFileSync("git", ["commit", "-m", "add multi.txt"], { cwd: REPO_DIR });
+    git(["add", "multi.txt"], { cwd: REPO_DIR });
+    git(["commit", "-m", "add multi.txt"], { cwd: REPO_DIR });
 
     // Change multiple consecutive lines
     writeFileSync(filePath, "line1\nchanged2\nchanged3\nchanged4\nline5\n");
 
-    const result = runCommand(ZAGI_BIN, ["diff"]);
+    const result = zagi(["diff"], { cwd: REPO_DIR });
     // Should have format: multi.txt:2-4
     expect(result).toMatch(/multi\.txt:\d+-\d+\n/);
   });
 
   test("additions are prefixed with + and space", () => {
-    const result = runCommand(ZAGI_BIN, ["diff"]);
+    const result = zagi(["diff"], { cwd: REPO_DIR });
     const lines = result.split("\n");
     const additionLines = lines.filter((l) => l.startsWith("+"));
 
@@ -201,7 +188,7 @@ describe("zagi diff output format", () => {
     lines.splice(5, 1); // Remove line 6
     writeFileSync(filePath, lines.join("\n"));
 
-    const result = runCommand(ZAGI_BIN, ["diff"]);
+    const result = zagi(["diff"], { cwd: REPO_DIR });
     const deletionLines = result.split("\n").filter((l) => l.startsWith("-"));
 
     expect(deletionLines.length).toBeGreaterThan(0);
@@ -216,15 +203,15 @@ describe("zagi diff output format", () => {
     const filePath = resolve(REPO_DIR, "hunks.txt");
     const lines = Array.from({ length: 20 }, (_, i) => `line${i + 1}`);
     writeFileSync(filePath, lines.join("\n") + "\n");
-    execFileSync("git", ["add", "hunks.txt"], { cwd: REPO_DIR });
-    execFileSync("git", ["commit", "-m", "add hunks.txt"], { cwd: REPO_DIR });
+    git(["add", "hunks.txt"], { cwd: REPO_DIR });
+    git(["commit", "-m", "add hunks.txt"], { cwd: REPO_DIR });
 
     // Change lines at beginning and end (creating separate hunks)
     lines[1] = "modified2";
     lines[18] = "modified19";
     writeFileSync(filePath, lines.join("\n") + "\n");
 
-    const result = runCommand(ZAGI_BIN, ["diff", "--", "hunks.txt"]);
+    const result = zagi(["diff", "--", "hunks.txt"], { cwd: REPO_DIR });
     // Should have multiple file:line headers (one per hunk)
     const headers = result.match(/hunks\.txt:\d+/g);
     expect(headers).not.toBeNull();
@@ -232,7 +219,7 @@ describe("zagi diff output format", () => {
   });
 
   test("output has no git diff headers (---, +++, @@)", () => {
-    const result = runCommand(ZAGI_BIN, ["diff"]);
+    const result = zagi(["diff"], { cwd: REPO_DIR });
     expect(result).not.toContain("---");
     expect(result).not.toContain("+++");
     expect(result).not.toContain("@@");
@@ -242,47 +229,47 @@ describe("zagi diff output format", () => {
 
 describe("zagi diff --stat", () => {
   test("shows file names with change counts", () => {
-    const result = runCommand(ZAGI_BIN, ["diff", "--stat"]);
+    const result = zagi(["diff", "--stat"], { cwd: REPO_DIR });
     // Format: " filename | N ++--"
     expect(result).toMatch(/^\s+\S+\s+\|\s+\d+/m);
   });
 
   test("shows +/- visualization bar", () => {
-    const result = runCommand(ZAGI_BIN, ["diff", "--stat"]);
+    const result = zagi(["diff", "--stat"], { cwd: REPO_DIR });
     // Should contain + or - in the output
     expect(result).toMatch(/[+-]/);
   });
 
   test("shows summary line with file count", () => {
-    const result = runCommand(ZAGI_BIN, ["diff", "--stat"]);
+    const result = zagi(["diff", "--stat"], { cwd: REPO_DIR });
     // Format: " N files changed, X insertions(+), Y deletions(-)"
     expect(result).toMatch(/\d+ files changed/);
   });
 
   test("shows insertions count when present", () => {
-    const result = runCommand(ZAGI_BIN, ["diff", "--stat"]);
+    const result = zagi(["diff", "--stat"], { cwd: REPO_DIR });
     expect(result).toMatch(/\d+ insertions?\(\+\)/);
   });
 
   test("--stat with no changes shows 'no changes'", () => {
     // Reset all changes
-    execFileSync("git", ["checkout", "--", "."], { cwd: REPO_DIR });
-    execFileSync("git", ["clean", "-fd"], { cwd: REPO_DIR });
+    git(["checkout", "--", "."], { cwd: REPO_DIR });
+    git(["clean", "-fd"], { cwd: REPO_DIR });
 
-    const result = runCommand(ZAGI_BIN, ["diff", "--stat"]);
+    const result = zagi(["diff", "--stat"], { cwd: REPO_DIR });
     expect(result).toBe("no changes\n");
   });
 
   test("--stat with --staged works", () => {
-    execFileSync("git", ["add", "src/main.ts"], { cwd: REPO_DIR });
+    git(["add", "src/main.ts"], { cwd: REPO_DIR });
 
-    const result = runCommand(ZAGI_BIN, ["diff", "--staged", "--stat"]);
+    const result = zagi(["diff", "--staged", "--stat"], { cwd: REPO_DIR });
     expect(result).toContain("src/main.ts");
     expect(result).toMatch(/files changed/);
   });
 
   test("--stat shows summary info not full diff content", () => {
-    const stat = runCommand(ZAGI_BIN, ["diff", "--stat"]);
+    const stat = zagi(["diff", "--stat"], { cwd: REPO_DIR });
     // Stat mode should not contain actual diff lines
     expect(stat).not.toMatch(/^\+ /m);
     expect(stat).not.toMatch(/^- /m);
@@ -293,7 +280,7 @@ describe("zagi diff --stat", () => {
 
 describe("zagi diff --name-only", () => {
   test("shows only file names", () => {
-    const result = runCommand(ZAGI_BIN, ["diff", "--name-only"]);
+    const result = zagi(["diff", "--name-only"], { cwd: REPO_DIR });
     // Should just be filenames, one per line
     expect(result).toContain("src/main.ts");
     // Should not have any diff content
@@ -302,7 +289,7 @@ describe("zagi diff --name-only", () => {
   });
 
   test("--name-only lists each file once", () => {
-    const result = runCommand(ZAGI_BIN, ["diff", "--name-only"]);
+    const result = zagi(["diff", "--name-only"], { cwd: REPO_DIR });
     const lines = result.trim().split("\n").filter(Boolean);
     const unique = new Set(lines);
     expect(lines.length).toBe(unique.size);
@@ -310,34 +297,34 @@ describe("zagi diff --name-only", () => {
 
   test("--name-only with no changes shows 'no changes'", () => {
     // Reset all changes
-    execFileSync("git", ["checkout", "--", "."], { cwd: REPO_DIR });
-    execFileSync("git", ["clean", "-fd"], { cwd: REPO_DIR });
+    git(["checkout", "--", "."], { cwd: REPO_DIR });
+    git(["clean", "-fd"], { cwd: REPO_DIR });
 
-    const result = runCommand(ZAGI_BIN, ["diff", "--name-only"]);
+    const result = zagi(["diff", "--name-only"], { cwd: REPO_DIR });
     expect(result).toBe("no changes\n");
   });
 
   test("--name-only with --staged works", () => {
-    execFileSync("git", ["add", "src/main.ts"], { cwd: REPO_DIR });
+    git(["add", "src/main.ts"], { cwd: REPO_DIR });
 
-    const result = runCommand(ZAGI_BIN, ["diff", "--staged", "--name-only"]);
+    const result = zagi(["diff", "--staged", "--name-only"], { cwd: REPO_DIR });
     expect(result.trim()).toBe("src/main.ts");
   });
 
   test("--name-only produces smallest output", () => {
-    const nameOnly = runCommand(ZAGI_BIN, ["diff", "--name-only"]);
-    const stat = runCommand(ZAGI_BIN, ["diff", "--stat"]);
-    const patch = runCommand(ZAGI_BIN, ["diff"]);
+    const nameOnly = zagi(["diff", "--name-only"], { cwd: REPO_DIR });
+    const stat = zagi(["diff", "--stat"], { cwd: REPO_DIR });
+    const patch = zagi(["diff"], { cwd: REPO_DIR });
 
     expect(nameOnly.length).toBeLessThanOrEqual(stat.length);
     expect(nameOnly.length).toBeLessThan(patch.length);
   });
 
   test("--name-only with revision range", () => {
-    execFileSync("git", ["add", "."], { cwd: REPO_DIR });
-    execFileSync("git", ["commit", "-m", "test commit"], { cwd: REPO_DIR });
+    git(["add", "."], { cwd: REPO_DIR });
+    git(["commit", "-m", "test commit"], { cwd: REPO_DIR });
 
-    const result = runCommand(ZAGI_BIN, ["diff", "--name-only", "HEAD~1..HEAD"]);
+    const result = zagi(["diff", "--name-only", "HEAD~1..HEAD"], { cwd: REPO_DIR });
     expect(result).toContain("src/main.ts");
   });
 });

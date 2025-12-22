@@ -1,18 +1,9 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { execFileSync } from "child_process";
-import { resolve } from "path";
 import { rmSync } from "fs";
 import { createFixtureRepo } from "../fixtures/setup";
+import { zagi, git } from "./shared";
 
-const ZAGI_BIN = resolve(__dirname, "../../zig-out/bin/zagi");
 let REPO_DIR: string;
-
-function runCommand(cmd: string, args: string[]): string {
-  return execFileSync(cmd, args, {
-    cwd: REPO_DIR,
-    encoding: "utf-8",
-  });
-}
 
 beforeEach(() => {
   REPO_DIR = createFixtureRepo();
@@ -26,33 +17,33 @@ afterEach(() => {
 
 describe("zagi status", () => {
   test("produces smaller output than git status", () => {
-    const zagi = runCommand(ZAGI_BIN, ["status"]);
-    const git = runCommand("git", ["status"]);
+    const zagiOut = zagi(["status"], { cwd: REPO_DIR });
+    const gitOut = git(["status"], { cwd: REPO_DIR });
 
-    expect(zagi.length).toBeLessThan(git.length);
+    expect(zagiOut.length).toBeLessThan(gitOut.length);
   });
 
   test("shows branch name", () => {
-    const result = runCommand(ZAGI_BIN, ["status"]);
+    const result = zagi(["status"], { cwd: REPO_DIR });
     expect(result).toMatch(/^branch: \w+/);
   });
 
   test("detects modified files", () => {
-    const zagi = runCommand(ZAGI_BIN, ["status"]);
-    const git = runCommand("git", ["status", "--porcelain"]);
+    const zagiOut = zagi(["status"], { cwd: REPO_DIR });
+    const gitOut = git(["status", "--porcelain"], { cwd: REPO_DIR });
 
-    const gitHasModified = git.includes(" M ");
-    const zagiHasModified = zagi.includes("modified:");
+    const gitHasModified = gitOut.includes(" M ");
+    const zagiHasModified = zagiOut.includes("modified:");
 
     expect(zagiHasModified).toBe(gitHasModified);
   });
 
   test("detects untracked files", () => {
-    const zagi = runCommand(ZAGI_BIN, ["status"]);
-    const git = runCommand("git", ["status", "--porcelain"]);
+    const zagiOut = zagi(["status"], { cwd: REPO_DIR });
+    const gitOut = git(["status", "--porcelain"], { cwd: REPO_DIR });
 
-    const gitHasUntracked = git.includes("??");
-    const zagiHasUntracked = zagi.includes("untracked:");
+    const gitHasUntracked = gitOut.includes("??");
+    const zagiHasUntracked = zagiOut.includes("untracked:");
 
     expect(zagiHasUntracked).toBe(gitHasUntracked);
   });
@@ -60,8 +51,8 @@ describe("zagi status", () => {
 
 describe("zagi status path filtering", () => {
   test("filters by specific file path", () => {
-    const all = runCommand(ZAGI_BIN, ["status"]);
-    const filtered = runCommand(ZAGI_BIN, ["status", "src/main.ts"]);
+    const all = zagi(["status"], { cwd: REPO_DIR });
+    const filtered = zagi(["status", "src/main.ts"], { cwd: REPO_DIR });
 
     // Both should show the modified file
     expect(all).toContain("src/main.ts");
@@ -69,26 +60,26 @@ describe("zagi status path filtering", () => {
   });
 
   test("filters by directory path", () => {
-    const result = runCommand(ZAGI_BIN, ["status", "src/"]);
+    const result = zagi(["status", "src/"], { cwd: REPO_DIR });
     expect(result).toContain("src/main.ts");
   });
 
   test("shows nothing when path has no changes", () => {
     // Create and commit a file, then check status for it
-    execFileSync("git", ["checkout", "--", "src/main.ts"], { cwd: REPO_DIR });
+    git(["checkout", "--", "src/main.ts"], { cwd: REPO_DIR });
 
-    const result = runCommand(ZAGI_BIN, ["status", "src/main.ts"]);
+    const result = zagi(["status", "src/main.ts"], { cwd: REPO_DIR });
     expect(result).toContain("nothing to commit");
   });
 
   test("filters out files not matching path", () => {
     // Check status for a path that doesn't have changes
-    const result = runCommand(ZAGI_BIN, ["status", "nonexistent/"]);
+    const result = zagi(["status", "nonexistent/"], { cwd: REPO_DIR });
     expect(result).toContain("nothing to commit");
   });
 
   test("multiple paths work", () => {
-    const result = runCommand(ZAGI_BIN, ["status", "src/", "README.md"]);
+    const result = zagi(["status", "src/", "README.md"], { cwd: REPO_DIR });
     // Should show src/main.ts (modified in fixture)
     expect(result).toContain("src/main.ts");
   });

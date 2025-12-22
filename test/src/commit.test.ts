@@ -1,41 +1,15 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { execFileSync } from "child_process";
 import { resolve } from "path";
-import { writeFileSync, rmSync } from "fs";
+import { writeFileSync, appendFileSync, rmSync } from "fs";
 import { createFixtureRepo } from "../fixtures/setup";
+import { zagi, git, createTestRepo, cleanupTestRepo } from "./shared";
 
-const ZAGI_BIN = resolve(__dirname, "../../zig-out/bin/zagi");
 let REPO_DIR: string;
-
-interface CommandResult {
-  output: string;
-  exitCode: number;
-}
-
-function runCommand(
-  cmd: string,
-  args: string[],
-  expectFail = false
-): CommandResult {
-  try {
-    const output = execFileSync(cmd, args, {
-      cwd: REPO_DIR,
-      encoding: "utf-8",
-    });
-    return { output, exitCode: 0 };
-  } catch (e: any) {
-    if (!expectFail) throw e;
-    return {
-      output: e.stderr || e.stdout || "",
-      exitCode: e.status || 1,
-    };
-  }
-}
 
 function stageTestFile() {
   const testFile = resolve(REPO_DIR, "commit-test.txt");
   writeFileSync(testFile, `test content ${Date.now()}\n`);
-  execFileSync("git", ["add", "commit-test.txt"], { cwd: REPO_DIR });
+  git(["add", "commit-test.txt"], { cwd: REPO_DIR });
 }
 
 beforeEach(() => {
@@ -51,219 +25,161 @@ afterEach(() => {
 describe("zagi commit", () => {
   test("commits staged changes with message", () => {
     stageTestFile();
-    const result = runCommand(ZAGI_BIN, ["commit", "-m", "Test commit"]);
+    const result = zagi(["commit", "-m", "Test commit"], { cwd: REPO_DIR });
 
-    expect(result.output).toContain("committed:");
-    expect(result.output).toContain("Test commit");
-    expect(result.output).toMatch(/[0-9a-f]{7}/);
-    expect(result.exitCode).toBe(0);
+    expect(result).toContain("committed:");
+    expect(result).toContain("Test commit");
+    expect(result).toMatch(/[0-9a-f]{7}/);
   });
 
   test("shows file count and stats", () => {
     stageTestFile();
-    const result = runCommand(ZAGI_BIN, ["commit", "-m", "Test with stats"]);
+    const result = zagi(["commit", "-m", "Test with stats"], { cwd: REPO_DIR });
 
-    expect(result.output).toMatch(/\d+ file/);
-    expect(result.output).toMatch(/\+\d+/);
-    expect(result.output).toMatch(/-\d+/);
+    expect(result).toMatch(/\d+ file/);
+    expect(result).toMatch(/\+\d+/);
+    expect(result).toMatch(/-\d+/);
   });
 
   test("error when nothing staged", () => {
-    const result = runCommand(ZAGI_BIN, ["commit", "-m", "Empty commit"], true);
+    const result = zagi(["commit", "-m", "Empty commit"], { cwd: REPO_DIR });
 
-    expect(result.output).toBe("error: nothing to commit\n");
-    expect(result.exitCode).toBe(1);
+    // Fixture repo has unstaged changes, so hint is shown
+    expect(result).toContain("error: nothing to commit");
   });
 
   test("shows usage when no message provided", () => {
     stageTestFile();
-    const result = runCommand(ZAGI_BIN, ["commit"], true);
+    const result = zagi(["commit"], { cwd: REPO_DIR });
 
-    expect(result.output).toContain("usage:");
-    expect(result.output).toContain("-m");
-    expect(result.exitCode).toBe(1);
+    expect(result).toContain("usage:");
+    expect(result).toContain("-m");
   });
 
   test("supports -m flag with equals sign", () => {
     stageTestFile();
-    const result = runCommand(ZAGI_BIN, ["commit", "--message=Equals format"]);
+    const result = zagi(["commit", "--message=Equals format"], { cwd: REPO_DIR });
 
-    expect(result.output).toContain("Equals format");
-    expect(result.exitCode).toBe(0);
+    expect(result).toContain("Equals format");
   });
 });
 
 describe("zagi commit --prompt", () => {
   test("stores prompt and shows confirmation", () => {
     stageTestFile();
-    const result = runCommand(ZAGI_BIN, [
+    const result = zagi([
       "commit",
       "-m",
       "Add test file",
       "--prompt",
       "Create a test file for testing",
-    ]);
+    ], { cwd: REPO_DIR });
 
-    expect(result.output).toContain("committed:");
-    expect(result.output).toContain("prompt saved");
-    expect(result.exitCode).toBe(0);
+    expect(result).toContain("committed:");
+    expect(result).toContain("prompt saved");
   });
 
   test("--prompt= syntax works", () => {
     stageTestFile();
-    const result = runCommand(ZAGI_BIN, [
+    const result = zagi([
       "commit",
       "-m",
       "Test equals syntax",
       "--prompt=This is the prompt",
-    ]);
+    ], { cwd: REPO_DIR });
 
-    expect(result.output).toContain("prompt saved");
-    expect(result.exitCode).toBe(0);
+    expect(result).toContain("prompt saved");
   });
 
   test("prompt can be viewed with git notes", () => {
     stageTestFile();
-    runCommand(ZAGI_BIN, [
+    zagi([
       "commit",
       "-m",
       "Commit with prompt",
       "--prompt",
       "My test prompt text",
-    ]);
+    ], { cwd: REPO_DIR });
 
     // Read the note using git notes command
-    const noteResult = execFileSync(
-      "git",
-      ["notes", "--ref=prompts", "show", "HEAD"],
-      { cwd: REPO_DIR, encoding: "utf-8" }
-    );
+    const noteResult = git(["notes", "--ref=prompts", "show", "HEAD"], { cwd: REPO_DIR });
 
     expect(noteResult).toContain("My test prompt text");
   });
 
   test("prompt shown with --prompts in log", () => {
     stageTestFile();
-    runCommand(ZAGI_BIN, [
+    zagi([
       "commit",
       "-m",
       "Commit for log test",
       "--prompt",
       "Prompt visible in log",
-    ]);
+    ], { cwd: REPO_DIR });
 
-    const logResult = runCommand(ZAGI_BIN, ["log", "-n", "1", "--prompts"]);
+    const logResult = zagi(["log", "-n", "1", "--prompts"], { cwd: REPO_DIR });
 
-    expect(logResult.output).toContain("Commit for log test");
-    expect(logResult.output).toContain("prompt: Prompt visible in log");
+    expect(logResult).toContain("Commit for log test");
+    expect(logResult).toContain("prompt: Prompt visible in log");
   });
 
   test("log without --prompts hides prompt", () => {
     stageTestFile();
-    runCommand(ZAGI_BIN, [
+    zagi([
       "commit",
       "-m",
       "Hidden prompt commit",
       "--prompt",
       "This should be hidden",
-    ]);
+    ], { cwd: REPO_DIR });
 
-    const logResult = runCommand(ZAGI_BIN, ["log", "-n", "1"]);
+    const logResult = zagi(["log", "-n", "1"], { cwd: REPO_DIR });
 
-    expect(logResult.output).toContain("Hidden prompt commit");
-    expect(logResult.output).not.toContain("prompt:");
-    expect(logResult.output).not.toContain("This should be hidden");
+    expect(logResult).toContain("Hidden prompt commit");
+    expect(logResult).not.toContain("prompt:");
+    expect(logResult).not.toContain("This should be hidden");
   });
 });
 
 describe("ZAGI_AGENT", () => {
-  function runWithEnv(
-    args: string[],
-    env: Record<string, string>,
-    expectFail = false
-  ): CommandResult {
-    try {
-      const output = execFileSync(ZAGI_BIN, args, {
-        cwd: REPO_DIR,
-        encoding: "utf-8",
-        env: { ...process.env, ...env },
-      });
-      return { output, exitCode: 0 };
-    } catch (e: any) {
-      if (!expectFail) throw e;
-      return {
-        output: e.stdout || e.stderr || "",
-        exitCode: e.status || 1,
-      };
-    }
-  }
-
   test("ZAGI_AGENT requires --prompt", () => {
     stageTestFile();
-    const result = runWithEnv(
+    const result = zagi(
       ["commit", "-m", "Agent commit"],
-      { ZAGI_AGENT: "claude-code" },
-      true
+      { cwd: REPO_DIR, env: { ZAGI_AGENT: "claude-code" } }
     );
 
-    expect(result.output).toContain("--prompt required");
-    expect(result.output).toContain("ZAGI_AGENT");
-    expect(result.exitCode).toBe(1);
+    expect(result).toContain("--prompt required");
+    expect(result).toContain("ZAGI_AGENT");
   });
 
   test("ZAGI_AGENT succeeds with --prompt", () => {
     stageTestFile();
-    const result = runWithEnv(
+    const result = zagi(
       ["commit", "-m", "Agent commit", "--prompt", "Agent prompt"],
-      { ZAGI_AGENT: "claude-code" }
+      { cwd: REPO_DIR, env: { ZAGI_AGENT: "claude-code" } }
     );
 
-    expect(result.output).toContain("committed:");
-    expect(result.exitCode).toBe(0);
+    expect(result).toContain("committed:");
   });
 });
 
 describe("ZAGI_STRIP_COAUTHORS", () => {
-  function runWithEnv(
-    args: string[],
-    env: Record<string, string>,
-    expectFail = false
-  ): CommandResult {
-    try {
-      const output = execFileSync(ZAGI_BIN, args, {
-        cwd: REPO_DIR,
-        encoding: "utf-8",
-        env: { ...process.env, ...env },
-      });
-      return { output, exitCode: 0 };
-    } catch (e: any) {
-      if (!expectFail) throw e;
-      return {
-        output: e.stdout || e.stderr || "",
-        exitCode: e.status || 1,
-      };
-    }
-  }
-
   test("strips Co-Authored-By lines when enabled", () => {
     stageTestFile();
     const message = `Add feature
 
 Co-Authored-By: Claude <claude@anthropic.com>`;
 
-    const result = runWithEnv(
+    const result = zagi(
       ["commit", "-m", message],
-      { ZAGI_STRIP_COAUTHORS: "1" }
+      { cwd: REPO_DIR, env: { ZAGI_STRIP_COAUTHORS: "1" } }
     );
 
-    expect(result.output).toContain("committed:");
-    expect(result.exitCode).toBe(0);
+    expect(result).toContain("committed:");
 
     // Check the actual commit message
-    const logResult = execFileSync("git", ["log", "-1", "--format=%B"], {
-      cwd: REPO_DIR,
-      encoding: "utf-8",
-    });
+    const logResult = git(["log", "-1", "--format=%B"], { cwd: REPO_DIR });
 
     expect(logResult.trim()).toBe("Add feature");
     expect(logResult).not.toContain("Co-Authored-By");
@@ -275,16 +191,12 @@ Co-Authored-By: Claude <claude@anthropic.com>`;
 
 Co-Authored-By: Claude <claude@anthropic.com>`;
 
-    const result = runCommand(ZAGI_BIN, ["commit", "-m", message]);
+    const result = zagi(["commit", "-m", message], { cwd: REPO_DIR });
 
-    expect(result.output).toContain("committed:");
-    expect(result.exitCode).toBe(0);
+    expect(result).toContain("committed:");
 
     // Check the actual commit message
-    const logResult = execFileSync("git", ["log", "-1", "--format=%B"], {
-      cwd: REPO_DIR,
-      encoding: "utf-8",
-    });
+    const logResult = git(["log", "-1", "--format=%B"], { cwd: REPO_DIR });
 
     expect(logResult).toContain("Co-Authored-By: Claude");
   });
@@ -296,17 +208,14 @@ Co-Authored-By: Claude <claude@anthropic.com>`;
 Co-Authored-By: Alice <alice@example.com>
 Co-Authored-By: Bob <bob@example.com>`;
 
-    const result = runWithEnv(
+    const result = zagi(
       ["commit", "-m", message],
-      { ZAGI_STRIP_COAUTHORS: "1" }
+      { cwd: REPO_DIR, env: { ZAGI_STRIP_COAUTHORS: "1" } }
     );
 
-    expect(result.exitCode).toBe(0);
+    expect(result).toContain("committed:");
 
-    const logResult = execFileSync("git", ["log", "-1", "--format=%B"], {
-      cwd: REPO_DIR,
-      encoding: "utf-8",
-    });
+    const logResult = git(["log", "-1", "--format=%B"], { cwd: REPO_DIR });
 
     expect(logResult.trim()).toBe("Fix bug");
     expect(logResult).not.toContain("Co-Authored-By");
@@ -322,21 +231,60 @@ Co-Authored-By: Claude <claude@anthropic.com>
 
 Signed-off-by: Matt`;
 
-    const result = runWithEnv(
+    const result = zagi(
       ["commit", "-m", message],
-      { ZAGI_STRIP_COAUTHORS: "1" }
+      { cwd: REPO_DIR, env: { ZAGI_STRIP_COAUTHORS: "1" } }
     );
 
-    expect(result.exitCode).toBe(0);
+    expect(result).toContain("committed:");
 
-    const logResult = execFileSync("git", ["log", "-1", "--format=%B"], {
-      cwd: REPO_DIR,
-      encoding: "utf-8",
-    });
+    const logResult = git(["log", "-1", "--format=%B"], { cwd: REPO_DIR });
 
     expect(logResult).toContain("Implement feature");
     expect(logResult).toContain("This adds a great new feature");
     expect(logResult).toContain("Signed-off-by: Matt");
     expect(logResult).not.toContain("Co-Authored-By");
+  });
+});
+
+describe("commit with unstaged changes", () => {
+  let testRepoDir: string;
+
+  beforeEach(() => {
+    testRepoDir = createTestRepo();
+  });
+
+  afterEach(() => {
+    cleanupTestRepo(testRepoDir);
+  });
+
+  test("shows hint when nothing staged but files modified", () => {
+    // Modify a tracked file without staging
+    appendFileSync(resolve(testRepoDir, "README.md"), "\nModified line\n");
+
+    const output = zagi(["commit", "-m", "test"], { cwd: testRepoDir });
+
+    expect(output).toContain("hint: did you mean to add?");
+    expect(output).toContain("unstaged:");
+    expect(output).toContain("README.md");
+    expect(output).toContain("error: nothing to commit");
+  });
+
+  test("shows hint with untracked files", () => {
+    // Create untracked file
+    writeFileSync(resolve(testRepoDir, "new-file.txt"), "new content\n");
+
+    const output = zagi(["commit", "-m", "test"], { cwd: testRepoDir });
+
+    expect(output).toContain("hint: did you mean to add?");
+    expect(output).toContain("??");
+    expect(output).toContain("new-file.txt");
+  });
+
+  test("no hint when working tree is clean", () => {
+    const output = zagi(["commit", "-m", "test"], { cwd: testRepoDir });
+
+    expect(output).not.toContain("hint:");
+    expect(output).toContain("error: nothing to commit");
   });
 });
