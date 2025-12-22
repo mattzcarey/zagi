@@ -1,10 +1,9 @@
 import { bench, describe, beforeAll, afterAll } from "vitest";
-import { execFileSync } from "child_process";
 import { resolve } from "path";
 import { writeFileSync, rmSync } from "fs";
 import { createFixtureRepo } from "../fixtures/setup";
+import { zagi, git } from "./shared";
 
-const ZAGI_BIN = resolve(__dirname, "../../zig-out/bin/zagi");
 let REPO_DIR: string;
 
 beforeAll(() => {
@@ -17,23 +16,22 @@ afterAll(() => {
   }
 });
 
-describe("git commit benchmarks", () => {
-  // Use unique IDs to avoid conflicts between parallel bench runs
+describe("git add + commit benchmarks", () => {
   const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-  bench("zagi commit", () => {
+  bench("zagi add + commit", () => {
     const id = uid();
     const testFile = resolve(REPO_DIR, `zagi-${id}.txt`);
     writeFileSync(testFile, `zagi bench ${id}\n`);
-    execFileSync("git", ["add", testFile], { cwd: REPO_DIR });
-    execFileSync(ZAGI_BIN, ["commit", "-m", `zagi ${id}`], { cwd: REPO_DIR });
+    zagi(["add", testFile], { cwd: REPO_DIR });
+    zagi(["commit", "-m", `zagi ${id}`], { cwd: REPO_DIR });
   });
 
-  bench("git commit", () => {
+  bench("git add + commit", () => {
     const id = uid();
     const testFile = resolve(REPO_DIR, `git-${id}.txt`);
     writeFileSync(testFile, `git bench ${id}\n`);
-    execFileSync("git", ["add", testFile], { cwd: REPO_DIR });
-    execFileSync("git", ["commit", "-m", `git ${id}`], { cwd: REPO_DIR });
+    git(["add", testFile], { cwd: REPO_DIR });
+    git(["commit", "-m", `git ${id}`], { cwd: REPO_DIR });
   });
 });
