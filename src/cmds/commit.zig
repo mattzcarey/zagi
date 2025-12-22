@@ -1,6 +1,6 @@
 const std = @import("std");
-const c = @cImport(@cInclude("git2.h"));
 const git = @import("git.zig");
+const c = git.c;
 
 pub const help =
     \\usage: git commit -m <message> [-a] [--amend] [--prompt <text>]
@@ -131,6 +131,54 @@ pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) git.Error!void {
     if (has_head and head_commit != null and !amend) {
         const head_tree_oid = c.git_commit_tree_id(head_commit);
         if (head_tree_oid != null and c.git_oid_equal(&tree_oid, head_tree_oid) != 0) {
+            // Check for unstaged changes and show hint
+            var status_list: ?*c.git_status_list = null;
+            var status_opts = std.mem.zeroes(c.git_status_options);
+            status_opts.version = c.GIT_STATUS_OPTIONS_VERSION;
+            status_opts.show = c.GIT_STATUS_SHOW_WORKDIR_ONLY;
+            status_opts.flags = c.GIT_STATUS_OPT_INCLUDE_UNTRACKED;
+
+            if (c.git_status_list_new(&status_list, repo, &status_opts) == 0) {
+                defer c.git_status_list_free(status_list);
+                const count = c.git_status_list_entrycount(status_list);
+                if (count > 0) {
+                    stdout.print("hint: did you mean to add?\n", .{}) catch {};
+                    stdout.print("unstaged:\n", .{}) catch {};
+
+                    var shown: usize = 0;
+                    const max_show: usize = 10;
+                    for (0..count) |idx| {
+                        if (shown >= max_show) {
+                            stdout.print("  ... and {d} more\n", .{count - shown}) catch {};
+                            break;
+                        }
+                        const entry = c.git_status_byindex(status_list, idx);
+                        if (entry != null) {
+                            const s = entry.*.status;
+                            // Show workdir changes
+                            if (s & c.GIT_STATUS_WT_NEW != 0) {
+                                if (entry.*.index_to_workdir != null) {
+                                    const path = std.mem.sliceTo(entry.*.index_to_workdir.*.new_file.path, 0);
+                                    stdout.print("  ?? {s}\n", .{path}) catch {};
+                                    shown += 1;
+                                }
+                            } else if (s & c.GIT_STATUS_WT_MODIFIED != 0) {
+                                if (entry.*.index_to_workdir != null) {
+                                    const path = std.mem.sliceTo(entry.*.index_to_workdir.*.new_file.path, 0);
+                                    stdout.print("   M {s}\n", .{path}) catch {};
+                                    shown += 1;
+                                }
+                            } else if (s & c.GIT_STATUS_WT_DELETED != 0) {
+                                if (entry.*.index_to_workdir != null) {
+                                    const path = std.mem.sliceTo(entry.*.index_to_workdir.*.old_file.path, 0);
+                                    stdout.print("   D {s}\n", .{path}) catch {};
+                                    shown += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             return git.Error.NothingToCommit;
         }
     }

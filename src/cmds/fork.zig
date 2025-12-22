@@ -1,6 +1,6 @@
 const std = @import("std");
-const c = @cImport(@cInclude("git2.h"));
 const git = @import("git.zig");
+const c = git.c;
 
 pub const help =
     \\usage: git fork [<name>] [options]
@@ -394,11 +394,51 @@ fn checkNotDetachedHead(repo: ?*c.git_repository, stdout: anytype) !void {
     }
 }
 
+/// Opens the repository for a fork worktree by name
+fn getForkRepo(repo: ?*c.git_repository, name: []const u8) ?*c.git_repository {
+    var name_z: [256]u8 = undefined;
+    if (name.len >= name_z.len) return null;
+    @memcpy(name_z[0..name.len], name);
+    name_z[name.len] = 0;
+
+    var worktree: ?*c.git_worktree = null;
+    if (c.git_worktree_lookup(&worktree, repo, &name_z) < 0) return null;
+    defer c.git_worktree_free(worktree);
+
+    const wt_path = c.git_worktree_path(worktree);
+    if (wt_path == null) return null;
+
+    const wt_path_slice = std.mem.sliceTo(wt_path, 0);
+    var path_z: [std.fs.max_path_bytes]u8 = undefined;
+    @memcpy(path_z[0..wt_path_slice.len], wt_path_slice);
+    path_z[wt_path_slice.len] = 0;
+
+    var fork_repo: ?*c.git_repository = null;
+    if (c.git_repository_open(&fork_repo, &path_z) < 0) return null;
+
+    return fork_repo;
+}
+
 fn pickFork(allocator: std.mem.Allocator, repo: ?*c.git_repository, name: []const u8, stdout: anytype) !void {
     _ = allocator;
 
     // Check for detached HEAD
     try checkNotDetachedHead(repo, stdout);
+
+    // Check for uncommitted changes in the fork worktree
+    const fork_repo = getForkRepo(repo, name);
+    if (fork_repo != null) {
+        defer c.git_repository_free(fork_repo);
+
+        if (git.countUncommitted(fork_repo)) |counts| {
+            const total = counts.total();
+            if (total > 0) {
+                stdout.print("warning: fork '{s}' has uncommitted changes\n", .{name}) catch {};
+                stdout.print("  {d} file{s} not committed\n", .{ total, if (total == 1) "" else "s" }) catch {};
+                stdout.print("\nhint: cd .forks/{s} && git add . && git commit -m \"...\"\n\n", .{name}) catch {};
+            }
+        }
+    }
 
     // Check if we're already in a merge state
     const state = c.git_repository_state(repo);

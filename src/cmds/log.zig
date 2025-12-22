@@ -1,6 +1,6 @@
 const std = @import("std");
-const c = @cImport(@cInclude("git2.h"));
 const git = @import("git.zig");
+const c = git.c;
 
 pub const help =
     \\usage: git log [-n <count>] [--author=<pattern>] [--grep=<pattern>]
