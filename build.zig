@@ -9,6 +9,9 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    // Get version from git tag at build time
+    const version = getVersion(b);
+
     const exe = b.addExecutable(.{
         .name = "zagi",
         .root_module = b.createModule(.{
@@ -17,6 +20,11 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+
+    // Pass version as build option
+    const options = b.addOptions();
+    options.addOption([]const u8, "version", version);
+    exe.root_module.addOptions("build_options", options);
 
     exe.root_module.linkLibrary(libgit2_dep.artifact("git2"));
 
@@ -39,6 +47,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    exe_unit_tests.root_module.addOptions("build_options", options);
 
     const log_tests = b.addTest(.{
         .root_module = b.createModule(.{
@@ -109,4 +118,27 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_add_tests.step);
     test_step.dependOn(&run_commit_tests.step);
     test_step.dependOn(&run_diff_tests.step);
+}
+
+fn getVersion(b: *std.Build) []const u8 {
+    // Try to get version from git describe
+    // runAllowFail returns the stdout on success, or an error on failure
+    // --dirty appends "-dirty" if there are uncommitted changes
+    var _code: u8 = 0;
+    const result = b.runAllowFail(&.{ "git", "describe", "--tags", "--always", "--dirty" }, &_code, .Inherit) catch {
+        return "dev";
+    };
+
+    // Trim whitespace and strip leading 'v' if present
+    const trimmed = std.mem.trim(u8, result, &std.ascii.whitespace);
+    if (trimmed.len == 0) {
+        return "dev";
+    }
+
+    // Strip leading 'v' from version tags (e.g., "v0.1.6" -> "0.1.6")
+    if (trimmed[0] == 'v') {
+        return trimmed[1..];
+    }
+
+    return trimmed;
 }
