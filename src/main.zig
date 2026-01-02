@@ -1,4 +1,5 @@
 const std = @import("std");
+const build_options = @import("build_options");
 const passthrough = @import("passthrough.zig");
 const log = @import("cmds/log.zig");
 const status = @import("cmds/status.zig");
@@ -9,7 +10,7 @@ const diff = @import("cmds/diff.zig");
 const fork = @import("cmds/fork.zig");
 const git = @import("cmds/git.zig");
 
-const version = "0.1.0";
+const version = build_options.version;
 
 const Command = enum {
     log_cmd,
