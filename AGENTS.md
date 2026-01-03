@@ -57,6 +57,8 @@ These commands cause unrecoverable data loss and are blocked when `ZAGI_AGENT` i
 | `restore .` | Discards all working tree changes |
 | `restore --worktree` | Discards working tree changes |
 | `push --force/-f` | Overwrites remote history |
+| `push --delete` | Deletes remote branch |
+| `push <remote> :<branch>` | Deletes remote branch (refspec syntax) |
 | `stash drop` | Permanently deletes stashed changes |
 | `stash clear` | Permanently deletes all stashes |
 | `branch -D` | Force deletes branch (even if not merged) |
