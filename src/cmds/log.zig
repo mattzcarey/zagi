@@ -261,7 +261,7 @@ fn printCommit(
         note = null;
     }
 
-    // Show session transcript if requested (with offset/limit pagination)
+    // Show session transcript if requested
     if (opts.show_session) {
         if (c.git_note_read(&note, repo, "refs/notes/session", oid) == 0) {
             defer c.git_note_free(note);
@@ -270,26 +270,31 @@ fn printCommit(
                 const session_text = std.mem.sliceTo(msg, 0);
                 const total_len = session_text.len;
 
-                // Apply offset and limit
-                if (opts.session_offset >= total_len) {
-                    try writer.print("  session: (offset {d} beyond end, total {d} bytes)\n", .{ opts.session_offset, total_len });
+                // Check if it's new markdown format (starts with <details>)
+                if (std.mem.startsWith(u8, session_text, "<details>")) {
+                    // Markdown format - display directly (already human-readable)
+                    try writer.print("  session:\n{s}\n", .{session_text});
                 } else {
-                    const start = opts.session_offset;
-                    const remaining = total_len - start;
-                    const display_len = @min(remaining, opts.session_limit);
-                    const end = start + display_len;
+                    // Legacy JSON format - use byte pagination
+                    if (opts.session_offset >= total_len) {
+                        try writer.print("  session: (offset {d} beyond end, total {d} bytes)\n", .{ opts.session_offset, total_len });
+                    } else {
+                        const start = opts.session_offset;
+                        const remaining = total_len - start;
+                        const display_len = @min(remaining, opts.session_limit);
+                        const end = start + display_len;
 
-                    if (start > 0 or end < total_len) {
-                        // Show range info when using offset or truncated
-                        try writer.print("  session [{d}-{d} of {d} bytes]:\n  ", .{ start, end, total_len });
-                    } else {
-                        try writer.print("  session:\n  ", .{});
-                    }
-                    try writer.print("{s}", .{session_text[start..end]});
-                    if (end < total_len) {
-                        try writer.print("\n  ... ({d} more bytes, use --session-offset={d})\n", .{ total_len - end, end });
-                    } else {
-                        try writer.print("\n", .{});
+                        if (start > 0 or end < total_len) {
+                            try writer.print("  session [{d}-{d} of {d} bytes]:\n  ", .{ start, end, total_len });
+                        } else {
+                            try writer.print("  session:\n  ", .{});
+                        }
+                        try writer.print("{s}", .{session_text[start..end]});
+                        if (end < total_len) {
+                            try writer.print("\n  ... ({d} more bytes, use --session-offset={d})\n", .{ total_len - end, end });
+                        } else {
+                            try writer.print("\n", .{});
+                        }
                     }
                 }
             }

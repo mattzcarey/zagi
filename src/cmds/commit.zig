@@ -309,28 +309,82 @@ pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) git.Error!void {
             );
         }
 
-        // 3. Store session transcript in refs/notes/session (if available)
+        // 3. Store session transcript in refs/notes/session (delta since last checkpoint)
         var cwd_buf: [std.fs.max_path_bytes]u8 = undefined;
         const cwd = std.fs.cwd().realpath(".", &cwd_buf) catch null;
         if (cwd) |c_path| {
-            if (detect.readCurrentSession(allocator, agent, c_path)) |session| {
-                defer allocator.free(session.path);
-                defer allocator.free(session.transcript);
+            // Get checkpoint from parent commit (if any)
+            var checkpoint_uuid: ?[]const u8 = null;
+            if (head_commit) |hc| {
+                const parent_oid = c.git_commit_id(hc);
+                if (parent_oid != null) {
+                    var checkpoint_note: ?*c.git_note = null;
+                    if (c.git_note_read(&checkpoint_note, repo, "refs/notes/session-checkpoint", parent_oid) == 0) {
+                        defer c.git_note_free(checkpoint_note);
+                        const note_msg = c.git_note_message(checkpoint_note);
+                        if (note_msg != null) {
+                            checkpoint_uuid = std.mem.sliceTo(note_msg, 0);
+                        }
+                    }
+                }
+            }
 
-                const session_z = allocator.allocSentinel(u8, session.transcript.len, 0) catch null;
-                if (session_z) |sz| {
-                    defer allocator.free(sz);
-                    @memcpy(sz, session.transcript);
-                    _ = c.git_note_create(
-                        &note_oid,
-                        repo,
-                        "refs/notes/session",
-                        signature,
-                        signature,
-                        &commit_oid,
-                        sz.ptr,
-                        0,
-                    );
+            // Read session entries after checkpoint (or all if no checkpoint)
+            if (detect.readSessionEntriesAfter(allocator, agent, c_path, checkpoint_uuid)) |result| {
+                defer allocator.free(result.session_path);
+                defer {
+                    for (result.entries) |entry| {
+                        allocator.free(entry.uuid);
+                        allocator.free(entry.timestamp);
+                        allocator.free(entry.entry_type);
+                        if (entry.role) |r| allocator.free(r);
+                        if (entry.content) |cont| allocator.free(cont);
+                        if (entry.tool_name) |t| allocator.free(t);
+                    }
+                    allocator.free(result.entries);
+                }
+                if (result.last_uuid) |last| {
+                    defer allocator.free(last);
+
+                    // Format as markdown
+                    const markdown = detect.formatSessionMarkdown(allocator, result.entries) catch null;
+                    if (markdown) |md| {
+                        defer allocator.free(md);
+
+                        // Store markdown in refs/notes/session
+                        const session_z = allocator.allocSentinel(u8, md.len, 0) catch null;
+                        if (session_z) |sz| {
+                            defer allocator.free(sz);
+                            @memcpy(sz, md);
+                            _ = c.git_note_create(
+                                &note_oid,
+                                repo,
+                                "refs/notes/session",
+                                signature,
+                                signature,
+                                &commit_oid,
+                                sz.ptr,
+                                0,
+                            );
+                        }
+
+                        // Store checkpoint (last UUID) for next commit
+                        const checkpoint_z = allocator.allocSentinel(u8, last.len, 0) catch null;
+                        if (checkpoint_z) |cz| {
+                            defer allocator.free(cz);
+                            @memcpy(cz, last);
+                            _ = c.git_note_create(
+                                &note_oid,
+                                repo,
+                                "refs/notes/session-checkpoint",
+                                signature,
+                                signature,
+                                &commit_oid,
+                                cz.ptr,
+                                0,
+                            );
+                        }
+                    }
                 }
             }
         }

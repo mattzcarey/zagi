@@ -20,9 +20,12 @@ pub const help =
 ;
 
 const run_help =
-    \\usage: git agent run [options]
+    \\usage: git agent run [options] [prompt]
     \\
     \\Execute RALPH loop to automatically complete tasks.
+    \\
+    \\Arguments:
+    \\  prompt               Optional guidance for all tasks (e.g., focus areas, constraints)
     \\
     \\Options:
     \\  --once               Run only one task, then exit
@@ -34,7 +37,7 @@ const run_help =
     \\Examples:
     \\  git agent run
     \\  git agent run --once
-    \\  git agent run --dry-run
+    \\  git agent run "focus on error handling, add tests"
     \\  ZAGI_AGENT=opencode git agent run
     \\
 ;
@@ -109,6 +112,7 @@ fn buildExecutorArgs(
     } else if (std.mem.eql(u8, executor, "claude")) {
         try args.append(allocator, "claude");
         if (!interactive) {
+            try args.append(allocator, "--dangerously-skip-permissions");
             try args.append(allocator, "-p");
         }
         try args.append(allocator, prompt);
@@ -135,7 +139,7 @@ fn formatExecutorCommand(executor: []const u8, agent_cmd: ?[]const u8, interacti
     // Custom command - shown as-is, user is responsible for including flags
     if (agent_cmd) |cmd| return cmd;
     if (std.mem.eql(u8, executor, "claude")) {
-        return if (interactive) "claude" else "claude -p";
+        return if (interactive) "claude" else "claude --dangerously-skip-permissions -p";
     }
     if (std.mem.eql(u8, executor, "opencode")) {
         return if (interactive) "opencode" else "opencode run";
@@ -474,6 +478,7 @@ fn runRun(allocator: std.mem.Allocator, args: [][:0]u8) Error!void {
     var dry_run = false;
     var delay: u32 = 2;
     var max_tasks: ?u32 = null;
+    var operator_prompt: ?[]const u8 = null;
 
     var i: usize = 3; // Start after "zagi agent run"
     while (i < args.len) {
@@ -508,9 +513,12 @@ fn runRun(allocator: std.mem.Allocator, args: [][:0]u8) Error!void {
         } else if (std.mem.eql(u8, arg, "-h") or std.mem.eql(u8, arg, "--help")) {
             stdout.print("{s}", .{run_help}) catch {};
             return;
-        } else {
+        } else if (arg[0] == '-') {
             stdout.print("error: unknown option '{s}'\n", .{arg}) catch {};
             return Error.InvalidCommand;
+        } else {
+            // Positional argument = operator prompt
+            operator_prompt = arg;
         }
         i += 1;
     }
@@ -580,7 +588,11 @@ fn runRun(allocator: std.mem.Allocator, args: [][:0]u8) Error!void {
     if (dry_run) {
         stdout.print("(dry-run mode - no commands will be executed)\n", .{}) catch {};
     }
-    stdout.print("Executor: {s}\n\n", .{executor}) catch {};
+    stdout.print("Executor: {s}\n", .{executor}) catch {};
+    if (operator_prompt) |p| {
+        stdout.print("Prompt: {s}\n", .{p}) catch {};
+    }
+    stdout.print("\n", .{}) catch {};
 
     while (true) {
         if (max_tasks) |max| {
@@ -641,7 +653,7 @@ fn runRun(allocator: std.mem.Allocator, args: [][:0]u8) Error!void {
             stdout.print("\n", .{}) catch {};
             tasks_completed += 1;
         } else {
-            const success = executeTask(allocator, executor, agent_cmd, exe_path, task.id, task.content, log_path) catch false;
+            const success = executeTask(allocator, executor, agent_cmd, exe_path, task.id, task.content, operator_prompt, log_path) catch false;
 
             if (success) {
                 updateFailureCount(allocator, &consecutive_failures, task.id, 0);
@@ -728,10 +740,16 @@ fn getPendingTasks(allocator: std.mem.Allocator) !PendingTasks {
     return PendingTasks{ .tasks = pending.toOwnedSlice(allocator) catch &.{} };
 }
 
-fn createPrompt(allocator: std.mem.Allocator, exe_path: []const u8, task_id: []const u8, task_content: []const u8) ![]u8 {
+fn createPrompt(allocator: std.mem.Allocator, exe_path: []const u8, task_id: []const u8, task_content: []const u8, operator_prompt: ?[]const u8) ![]u8 {
+    const prompt_section = if (operator_prompt) |p|
+        std.fmt.allocPrint(allocator, "\nOperator guidance:\n{s}\n", .{p}) catch ""
+    else
+        "";
+    defer if (operator_prompt != null and prompt_section.len > 0) allocator.free(prompt_section);
+
     return std.fmt.allocPrint(allocator,
         \\Task ID: {0s}
-        \\Task: {1s}
+        \\Task: {1s}{3s}
         \\
         \\Instructions:
         \\1. Read AGENTS.md if it exists for project context
@@ -762,13 +780,13 @@ fn createPrompt(allocator: std.mem.Allocator, exe_path: []const u8, task_id: []c
         \\- NEVER git push
         \\- Only work on this task
         \\- Must output the completion promise when done
-    , .{ task_id, task_content, exe_path });
+    , .{ task_id, task_content, exe_path, prompt_section });
 }
 
-fn executeTask(allocator: std.mem.Allocator, executor: []const u8, agent_cmd: ?[]const u8, exe_path: []const u8, task_id: []const u8, task_content: []const u8, log_path: ?[]const u8) !bool {
+fn executeTask(allocator: std.mem.Allocator, executor: []const u8, agent_cmd: ?[]const u8, exe_path: []const u8, task_id: []const u8, task_content: []const u8, operator_prompt: ?[]const u8, log_path: ?[]const u8) !bool {
     const stderr_writer = std.fs.File.stderr().deprecatedWriter();
 
-    const prompt = try createPrompt(allocator, exe_path, task_id, task_content);
+    const prompt = try createPrompt(allocator, exe_path, task_id, task_content, operator_prompt);
     defer allocator.free(prompt);
 
     // Use headless mode (interactive=false) for autonomous task execution
@@ -854,14 +872,15 @@ fn executeTask(allocator: std.mem.Allocator, executor: []const u8, agent_cmd: ?[
 // Tests for buildExecutorArgs
 const testing = std.testing;
 
-test "buildExecutorArgs - claude headless includes -p" {
+test "buildExecutorArgs - claude headless includes --dangerously-skip-permissions and -p" {
     var args = try buildExecutorArgs(testing.allocator, "claude", null, "test prompt", false);
     defer args.deinit(testing.allocator);
 
-    try testing.expectEqual(@as(usize, 3), args.items.len);
+    try testing.expectEqual(@as(usize, 4), args.items.len);
     try testing.expectEqualStrings("claude", args.items[0]);
-    try testing.expectEqualStrings("-p", args.items[1]);
-    try testing.expectEqualStrings("test prompt", args.items[2]);
+    try testing.expectEqualStrings("--dangerously-skip-permissions", args.items[1]);
+    try testing.expectEqualStrings("-p", args.items[2]);
+    try testing.expectEqualStrings("test prompt", args.items[3]);
 }
 
 test "buildExecutorArgs - claude interactive no -p" {

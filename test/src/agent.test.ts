@@ -410,7 +410,7 @@ describe("zagi agent executor paths", () => {
 
     expect(result).toContain("Executor: claude");
     expect(result).toContain("Would execute:");
-    expect(result).toContain("claude -p");
+    expect(result).toContain("claude --dangerously-skip-permissions -p");
   });
 
   test("ZAGI_AGENT=claude uses claude executor", () => {
@@ -422,7 +422,7 @@ describe("zagi agent executor paths", () => {
     });
 
     expect(result).toContain("Executor: claude");
-    expect(result).toContain("claude -p");
+    expect(result).toContain("claude --dangerously-skip-permissions -p");
   });
 
   test("ZAGI_AGENT=opencode uses opencode executor", () => {
@@ -495,10 +495,11 @@ describe("zagi agent executor paths", () => {
       cwd: REPO_DIR
     });
 
-    // In plan mode, claude runs interactively (no -p flag)
+    // In plan mode, claude runs interactively (no --dangerously-skip-permissions or -p)
     expect(result).toContain("Would execute:");
     expect(result).toContain("claude");
-    expect(result).not.toMatch(/claude -p/);
+    expect(result).not.toContain("--dangerously-skip-permissions");
+    expect(result).not.toMatch(/claude.*-p/);
   });
 
   test("plan subcommand uses opencode in interactive mode (no run subcommand)", () => {
