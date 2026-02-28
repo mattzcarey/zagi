@@ -57,6 +57,126 @@ When agent mode is active:
 1. `git commit` will fail without `--prompt`, ensuring all AI-generated commits have their prompts recorded
 2. Destructive commands are blocked to prevent data loss
 
+## git edit (Mid-Stack Editing)
+
+The `git edit` command enables **jj-style mid-stack editing** - the ability to travel back to any ancestor commit, make changes, then automatically rebase all descendant commits on top. This is useful when you need to fix a bug or update code in a commit that's not at the tip of your branch.
+
+### Workflow
+
+```
+A -- B -- C -- D  (HEAD on main)
+     ^
+     |
+  you want to edit B
+```
+
+1. **Start the edit session:**
+   ```bash
+   git edit B       # or git edit HEAD~2
+   ```
+   This detaches HEAD at commit B and saves:
+   - Original HEAD location (D)
+   - List of descendant commits to rebase (C, D)
+
+2. **Make your changes** - edit files, stage, commit (amend or new commits)
+
+3. **Return and rebase:**
+   ```bash
+   git edit --back
+   ```
+   This cherry-picks C and D onto your modified B, then restores the branch pointer.
+
+```
+A -- B' -- C' -- D'  (HEAD back on main)
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `git edit <commit>` | Travel to commit for editing (detaches HEAD) |
+| `git edit --back` | Return to branch and rebase descendants |
+| `git edit --continue` | Continue after resolving a conflict |
+| `git edit --abort` | Cancel edit and restore original state |
+| `git edit --status` | Show current edit session state |
+
+### State Storage (refs/edit/*)
+
+Edit state is stored in git refs, not files, making it recoverable:
+
+| Ref | Purpose |
+|-----|---------|
+| `refs/edit/origin` | Points to original HEAD (where branch was) |
+| `refs/edit/descendants` | Points to blob containing OIDs of commits to rebase |
+| `refs/edit/current` | Points to last successful rebase position (during conflicts) |
+
+### Crash Recovery
+
+If something goes wrong (crash, terminal closed), recover with:
+
+```bash
+git edit --status    # Check if edit session is active and see state
+git edit --abort     # Restore original state and clear edit refs
+```
+
+The `--status` command shows:
+- Whether an edit is active
+- Current target commit
+- Original HEAD position
+- Number of remaining commits to rebase
+- Conflict status (if any)
+
+### Conflict Resolution
+
+If a cherry-pick fails during `--back`:
+
+```bash
+# Conflict output:
+conflict: cherry-pick failed
+resolve conflicts then:
+  git add <files>
+  git edit --continue
+or:
+  git edit --abort
+```
+
+The `--continue` command:
+1. Creates a commit from the resolved index
+2. Continues cherry-picking remaining descendants
+3. Completes the edit when all commits are rebased
+
+### Guardrails
+
+**Push is blocked during edit sessions.** Since you're in detached HEAD state with uncommitted rebase work, pushing would be dangerous:
+
+```bash
+$ git push
+error: git push blocked during edit session
+hint: complete with --back or --abort first
+```
+
+This prevents accidentally pushing a partial rebase state or corrupted history.
+
+### Example Session
+
+```bash
+# Fix a typo in a commit from 3 commits ago
+$ git edit HEAD~3
+edit: abc1234 (Add user authentication)
+from: def5678
+descendants: 3 commits
+
+# Make the fix
+$ vim src/auth.zig
+$ git add src/auth.zig
+$ git commit --amend --no-edit
+
+# Return with rebased history
+$ git edit --back
+edit: complete
+rebased: 3 commits
+```
+
 ## Agent Subcommands
 
 zagi provides two agent subcommands for autonomous task execution using the RALPH pattern (Recursive Agent Loop Pattern for Humans).

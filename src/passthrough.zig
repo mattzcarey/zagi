@@ -1,5 +1,8 @@
 const std = @import("std");
 const guardrails = @import("guardrails.zig");
+const edit = @import("cmds/edit.zig");
+const git = @import("cmds/git.zig");
+const c = git.c;
 const detect = @import("cmds/detect.zig");
 
 /// Pass through a command to git CLI
@@ -14,6 +17,15 @@ pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) !void {
             stderr.print("error: destructive command blocked\n", .{}) catch {};
             stderr.print("reason: {s}\n", .{reason}) catch {};
             stderr.print("hint: ask the user to run this command themselves, then confirm with you when done\n", .{}) catch {};
+            std.process.exit(1);
+        }
+    }
+
+    // Check edit-mode guardrail: block 'push' during edit session
+    if (isPushCommand(args)) {
+        if (isEditSessionActive()) {
+            stderr.print("error: git push blocked during edit session\n", .{}) catch {};
+            stderr.print("hint: complete with --back or --abort first\n", .{}) catch {};
             std.process.exit(1);
         }
     }
@@ -51,4 +63,32 @@ pub fn run(allocator: std.mem.Allocator, args: [][:0]u8) !void {
             std.process.exit(1);
         },
     }
+}
+
+/// Check if the command is 'push'
+fn isPushCommand(args: [][:0]u8) bool {
+    // Need at least: zagi push
+    if (args.len < 2) return false;
+
+    // Check if arg[1] (the git subcommand) is "push"
+    const cmd = std.mem.sliceTo(args[1], 0);
+    return std.mem.eql(u8, cmd, "push");
+}
+
+/// Check if an edit session is currently active by looking for refs/edit/origin
+fn isEditSessionActive() bool {
+    // Initialize libgit2
+    if (c.git_libgit2_init() < 0) {
+        return false;
+    }
+    defer _ = c.git_libgit2_shutdown();
+
+    // Open repository
+    var repo: ?*c.git_repository = null;
+    if (c.git_repository_open_ext(&repo, ".", 0, null) < 0) {
+        return false;
+    }
+    defer c.git_repository_free(repo);
+
+    return edit.isEditActive(repo);
 }

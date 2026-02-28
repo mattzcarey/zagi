@@ -7,6 +7,7 @@ const add = @import("cmds/add.zig");
 const alias = @import("cmds/alias.zig");
 const commit = @import("cmds/commit.zig");
 const diff = @import("cmds/diff.zig");
+const edit = @import("cmds/edit.zig");
 const fork = @import("cmds/fork.zig");
 const tasks = @import("cmds/tasks.zig");
 const agent = @import("cmds/agent.zig");
@@ -21,6 +22,7 @@ const Command = enum {
     alias_cmd,
     commit_cmd,
     diff_cmd,
+    edit_cmd,
     fork_cmd,
     tasks_cmd,
     agent_cmd,
@@ -96,6 +98,9 @@ fn run(allocator: std.mem.Allocator, args: [][:0]u8) !void {
     } else if (std.mem.eql(u8, cmd, "diff")) {
         current_command = .diff_cmd;
         try diff.run(allocator, args);
+    } else if (std.mem.eql(u8, cmd, "edit")) {
+        current_command = .edit_cmd;
+        try edit.run(allocator, args);
     } else if (std.mem.eql(u8, cmd, "fork")) {
         current_command = .fork_cmd;
         try fork.run(allocator, args);
@@ -125,6 +130,7 @@ fn printHelp(stdout: anytype) !void {
         \\  diff      Show changes
         \\  add       Stage files for commit
         \\  commit    Create a commit
+        \\  edit      Travel to commit for mid-stack editing
         \\  fork      Manage parallel worktrees
         \\  tasks     Task management for git repositories
         \\  agent     Execute RALPH loop to complete tasks
@@ -193,6 +199,34 @@ fn handleError(err: anyerror, cmd: Command) void {
             stderr.print("error: commit failed\n", .{}) catch {};
             break :blk 1;
         },
+        edit.Error.EditActive => blk: {
+            stderr.print("error: edit already in progress (use --abort to cancel)\n", .{}) catch {};
+            break :blk 1;
+        },
+        edit.Error.EditNotActive => blk: {
+            stderr.print("error: no edit in progress\n", .{}) catch {};
+            break :blk 1;
+        },
+        edit.Error.DirtyWorkingTree => blk: {
+            stderr.print("error: working tree has uncommitted changes\n", .{}) catch {};
+            break :blk 1;
+        },
+        edit.Error.NotAnAncestor => blk: {
+            stderr.print("error: target is not an ancestor of HEAD\n", .{}) catch {};
+            break :blk 1;
+        },
+        edit.Error.DetachedHead => blk: {
+            stderr.print("error: HEAD is detached (must be on a branch)\n", .{}) catch {};
+            break :blk 1;
+        },
+        edit.Error.InvalidCommit => blk: {
+            stderr.print("error: invalid commit reference\n", .{}) catch {};
+            break :blk 1;
+        },
+        edit.Error.CherryPickConflictExit => blk: {
+            // Message already printed by completeEdit
+            break :blk 2;
+        },
         error.OutOfMemory => blk: {
             stderr.print("fatal: out of memory\n", .{}) catch {};
             break :blk 1;
@@ -214,6 +248,7 @@ fn printUsageHelp(stderr: anytype, cmd: Command) void {
         .log_cmd => log.help,
         .alias_cmd => alias.help,
         .diff_cmd => diff.help,
+        .edit_cmd => edit.help,
         .fork_cmd => fork.help,
         .tasks_cmd => tasks.help,
         .agent_cmd => agent.help,
