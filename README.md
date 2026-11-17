@@ -1,5 +1,8 @@
 # zagi
 
+> [!NOTE]
+> zagi is not being actively worked on. What we learned building it went into [Cloudflare Artifacts](https://blog.cloudflare.com/artifacts-git-for-agents-beta/), Git-compatible versioned storage built for agents.
+
 > a better git interface for agents
 
 ## Why use zagi?
